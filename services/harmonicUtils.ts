@@ -138,59 +138,78 @@ export const parseCSV = (text: string): Track[] => {
   const lines = text.split('\n');
   const tracks: Track[] = [];
   
+  // Headers index mapping
+  let idxArtist = -1;
+  let idxTitle = -1;
+  let idxBpm = -1;
+  let idxKey = -1;
+  let idxGenre = -1;
+
   lines.forEach((line, index) => {
-    if (index === 0) return; // Skip header
     if (!line.trim()) return;
 
-    // Intento básico de parseo CSV (maneja comas simples)
-    // Serato Export: Artist, Title, Album, Length, BPM, Key, ...
-    const parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/); 
+    // Parseo robusto de CSV respetando comillas
+    const parts = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(s => s.replace(/^"|"$/g, '').trim());
+
+    // Detectar cabeceras en la primera línea o si encontramos palabras clave
+    if (index === 0 || (idxArtist === -1 && parts.some(p => p.toLowerCase() === 'bpm'))) {
+        parts.forEach((col, i) => {
+            const c = col.toLowerCase();
+            if (c === 'artist' || c === 'artista') idxArtist = i;
+            if (c === 'title' || c === 'name' || c === 'song' || c === 'canción' || c === 'titulo') idxTitle = i;
+            if (c === 'bpm' || c === 'tempo') idxBpm = i;
+            if (c === 'key' || c === 'key text' || c === 'tono') idxKey = i;
+            if (c === 'genre' || c === 'género') idxGenre = i;
+        });
+        // Si encontramos cabeceras, saltamos esta línea
+        if (idxArtist !== -1 || idxTitle !== -1) return;
+    }
+
+    // Si no detectamos cabeceras, usamos índices por defecto comunes en Serato/VDJ
+    // Default Serato Simple Text: Artist, Title, BPM, Key... (pero puede variar)
+    const artist = idxArtist !== -1 ? parts[idxArtist] : parts[0];
+    const title = idxTitle !== -1 ? parts[idxTitle] : parts[1];
     
-    // Mapeo flexible para demos. 
-    // Lo ideal es detectar headers, pero asumiremos un formato estándar:
-    // Artist, Title, BPM, Key, Genre (o similar)
-    if (parts.length >= 2) {
-      const clean = (s: string) => s ? s.replace(/"/g, '').trim() : '';
-      
-      // Intentamos adivinar columnas o usar índices fijos comunes
-      const artist = clean(parts[0]);
-      const title = clean(parts[1]);
-      
-      // Buscamos columnas que parezcan números para BPM
-      let bpm = 0;
-      let key = '';
-      let genre = '';
+    // Extracción inteligente si no hay índices definidos
+    let bpm = idxBpm !== -1 ? parseFloat(parts[idxBpm]) : 0;
+    let key = idxKey !== -1 ? parts[idxKey] : '';
+    let genre = idxGenre !== -1 ? parts[idxGenre] : '';
 
-      // Iteramos partes buscando patrones
-      for (let i = 2; i < parts.length; i++) {
-          const val = clean(parts[i]);
-          // Detectar BPM (numero entre 60 y 200)
-          if (!bpm && !isNaN(parseFloat(val)) && parseFloat(val) > 50 && parseFloat(val) < 220) {
-              bpm = parseFloat(val);
-              continue;
-          }
-          // Detectar Key (Formato 8A, 12B, etc)
-          if (!key && val.match(/^(\d{1,2})[ABab]$/)) {
-              key = val.toUpperCase();
-              continue;
-          }
-          // Asumir Genre si es texto largo
-          if (!genre && val.length > 3 && isNaN(parseFloat(val))) {
-              genre = val;
-          }
-      }
+    // Si falló la detección de cabeceras, usamos heurística
+    if (!bpm || !key) {
+         for (let i = 2; i < parts.length; i++) {
+            const val = parts[i];
+            // Detectar BPM (numero entre 60 y 220)
+            if (!bpm && !isNaN(parseFloat(val)) && parseFloat(val) > 50 && parseFloat(val) < 220) {
+                bpm = parseFloat(val);
+                continue;
+            }
+            // Detectar Key (Formato 8A, 12B, etc)
+            if (!key && val.match(/^(\d{1,2})[ABabmn]$/)) { // 8A, 8m, etc
+                key = val.toUpperCase().replace('M', 'A'); // Fix simple minor notation if needed
+                continue;
+            }
+             // Asumir Genre si es texto largo y no numérico
+            if (!genre && val.length > 3 && isNaN(parseFloat(val))) {
+                genre = val;
+            }
+         }
+    }
 
-      if (artist && title) {
+    if (artist && title) {
+        // Normalizar Key para Camelot (Si viene como 8m -> 8A, etc)
+        // Algunos programas exportan "Am" en lugar de "8A", aquí asumimos que el usuario ya tiene Camelot
+        // o que el parser lo coge bien.
+        
         tracks.push({
-          id: `${index}-${title}`,
+          id: `${index}-${title.replace(/\s/g, '')}`,
           artist,
           title,
-          bpm: bpm || 120, // Default a 120 si falla
-          key: key || '12A', // Default random si falla
+          bpm: bpm || 120, // Default
+          key: key || '12A', // Default
           genre: genre || 'Unknown',
-          energy: Math.floor(Math.random() * 4) + 6 // Simula energía media-alta para demo
+          energy: Math.floor(Math.random() * 4) + 6 // Simulación inicial
         });
-      }
     }
   });
   return tracks;
